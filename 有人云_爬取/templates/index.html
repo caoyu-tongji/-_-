@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>云平台数据显示</title>
+    <!-- 引入Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- 引入Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            padding: 20px;
+            background-color: #f8f9fa;
+        }
+        .container {
+            background-color: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #343a40;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        .chart-container {
+            position: relative;
+            height: 60vh;
+            margin-top: 20px;
+        }
+        .sensor-select {
+            margin-bottom: 20px;
+        }
+        .no-data {
+            display: flex;
+            height: 60vh;
+            justify-content: center;
+            align-items: center;
+            color: #6c757d;
+            font-size: 1.2rem;
+            border: 1px dashed #dee2e6;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>云平台数据显示系统</h1>
+        
+        <div class="row">
+            <div class="col-md-12">
+                <div class="sensor-select">
+                    <label for="sensorSelect" class="form-label">选择传感器：</label>
+                    <select id="sensorSelect" class="form-select">
+                        <option value="" selected disabled>请选择传感器</option>
+                        {% for sensor in sensors %}
+                        <option value="{{ sensor }}">{{ sensor }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="data-source-select mt-3">
+                    <label class="form-label">选择数据源：</label>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="radio" name="dataSource" id="allData" value="all" checked>
+                        <label class="form-check-label" for="allData">全部数据</label>
+                    </div>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="radio" name="dataSource" id="dailyData" value="daily">
+                        <label class="form-check-label" for="dailyData">单日数据</label>
+                    </div>
+                    <select id="dateSelect" class="form-select mt-2" style="display: none;">
+                        <option value="" selected disabled>请选择日期</option>
+                        {% for date in dates %}
+                        <option value="{{ date }}">{{ date }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row">
+            <div class="col-md-12">
+                <div id="noDataMessage" class="no-data">
+                    <p>请选择传感器查看数据</p>
+                </div>
+                <div id="chartContainer" class="chart-container" style="display: none;">
+                    <canvas id="sensorChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 引入Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <script>
+        // 全局变量存储图表实例
+        let chart = null;
+        
+        // 当选择数据源时触发
+        document.querySelectorAll('input[name="dataSource"]').forEach(radio => {
+            radio.addEventListener('change', function() {
+                const dateSelect = document.getElementById('dateSelect');
+                dateSelect.style.display = this.value === 'daily' ? 'block' : 'none';
+                const sensorName = document.getElementById('sensorSelect').value;
+                if (sensorName) {
+                    fetchSensorData(sensorName);
+                }
+            });
+        });
+
+        // 当选择日期时触发
+        document.getElementById('dateSelect').addEventListener('change', function() {
+            const sensorName = document.getElementById('sensorSelect').value;
+            if (sensorName) {
+                fetchSensorData(sensorName);
+            }
+        });
+        
+        // 当选择传感器时触发
+        document.getElementById('sensorSelect').addEventListener('change', function() {
+            const sensorName = this.value;
+            if (sensorName) {
+                fetchSensorData(sensorName);
+            }
+        });
+        
+        // 获取传感器数据
+        function fetchSensorData(sensorName) {
+            const dataSource = document.querySelector('input[name="dataSource"]:checked').value;
+            const dateSelect = document.getElementById('dateSelect');
+            const date = dataSource === 'daily' ? dateSelect.value : '';
+            
+            if (dataSource === 'daily' && !date) {
+                showNoDataMessage('请选择日期');
+                return;
+            }
+            
+            const url = dataSource === 'daily' 
+                ? `/get_sensor_data/${sensorName}/${date}`
+                : `/get_sensor_data/${sensorName}`;
+                
+            fetch(url)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        showNoDataMessage(data.error);
+                    } else {
+                        renderChart(data, sensorName);
+                    }
+                })
+                .catch(error => {
+                    console.error('获取数据失败:', error);
+                    showNoDataMessage('获取数据失败，请重试');
+                });
+        }
+        
+        // 显示无数据消息
+        function showNoDataMessage(message = '无数据可显示') {
+            document.getElementById('chartContainer').style.display = 'none';
+            const noDataElement = document.getElementById('noDataMessage');
+            noDataElement.style.display = 'flex';
+            noDataElement.querySelector('p').textContent = message;
+        }
+        
+        // 渲染图表
+        function renderChart(data, sensorName) {
+            document.getElementById('noDataMessage').style.display = 'none';
+            document.getElementById('chartContainer').style.display = 'block';
+            
+            // 如果已有图表实例，销毁它
+            if (chart) {
+                chart.destroy();
+            }
+            
+            // 获取图表上下文
+            const ctx = document.getElementById('sensorChart').getContext('2d');
+            
+            // 创建新图表
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: data.labels,
+                    datasets: [{
+                        label: sensorName,
+                        data: data.values,
+                        backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        borderWidth: 2,
+                        pointRadius: 3,
+                        pointBackgroundColor: 'rgba(75, 192, 192, 1)',
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: `${sensorName} 数据曲线`,
+                            font: {
+                                size: 18
+                            }
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false
+                        },
+                        legend: {
+                            position: 'top',
+                        }
+                    },
+                    scales: {
+                        x: {
+                            title: {
+                                display: true,
+                                text: '时间'
+                            },
+                            ticks: {
+                                maxRotation: 45,
+                                minRotation: 45
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: '数值'
+                            },
+                            beginAtZero: false
+                        }
+                    }
+                }
+            });
+        }
+    </script>
+</body>
+</html>
